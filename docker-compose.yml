@@ -1,0 +1,58 @@
+name: ai-agents-langflow
+
+services:
+  # MongoDB - stores performance-test metrics (api_performance_metrics; a
+  # second infra_metrics collection is scaffolded but disabled) as
+  # time-series collections. Seeded automatically on first start from
+  # mongodb/init/ (see 01-create-collections.js, 02-import-seed-data.sh).
+  mongodb:
+    image: mongo:7
+    container_name: perf-metrics-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?Set MONGO_INITDB_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD in .env}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:?Set MONGO_INITDB_DATABASE in .env}
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongodb/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - agent-net
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # LangFlow - the no-code agent builder. Stock image is used as-is: pymongo
+  # is already bundled, no custom-built image needed.
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: perf-metrics-langflow
+    ports:
+      - "7860:7860"
+    environment:
+      LANGFLOW_AUTO_LOGIN: "true"
+      LANGFLOW_SKIP_AUTH_AUTO_LOGIN: "true"
+      LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
+      # Read directly via os.environ in custom python component
+      MONGODB_CONNECTION_STRING: mongodb://${MONGO_INITDB_ROOT_USERNAME:?Set MONGO_INITDB_ROOT_USERNAME in .env}:${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD in .env}@mongodb:27017/${MONGO_INITDB_DATABASE:?Set MONGO_INITDB_DATABASE in .env}?authSource=admin
+    volumes:
+      - langflow_data:/app/langflow
+    networks:
+      - agent-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  agent-net:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  langflow_data:
